@@ -7,9 +7,17 @@ inputs:
   supabase_key:
     description: 'Supabase Key'
     required: true
+  threshold:
+    description: 'Threshold of performance decrease for new version to be declined as float (i.e. 0.10 = 10%)'
+    required: true
+  api_key:
+    description: 'API key'
+    required: true
 runs:
   using: 'docker'
   image: 'Dockerfile'
   env:
     NEXT_PUBLIC_SUPABASE_URL: ${{ inputs.supabase_url }}
     SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.supabase_key }}
+    THRESHOLD: ${{ inputs.threshold }}
+    UNKEY_API_ID: ${{ inputs.api_key }}

@@ -1,7 +1,6 @@
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
-import json
 import numpy as np
 from scipy.stats import wilcoxon
 import heapq
@@ -27,8 +26,8 @@ def bootstrap_analysis(data, n_bootstrap=10000, confidence_level=0.99):
     return np.mean(bootstrap_means), confidence_interval
 
 
-def wilcoxon_test(data1, data2):
-    stat, p = wilcoxon(data1, data2, zero_method="wilcox", correction=False, alternative="two-sided", method="auto")
+def wilcoxon_test(x, y):
+    stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", method="auto")
     return stat, p
 
 
@@ -89,17 +88,6 @@ def get_run_ids(api_key, app_name):
     return runs
 
 
-# def extract_values(data_input, key_name):
-#     values = []
-#     data_values = []
-#     for item in data_input.data:
-#         # Dynamically use the provided key_name to extract values.
-#         value = item['timeseries_data']['data']  # Returns None if key_name is not found.
-#         values = values + value
-#     for item in values:
-#         data_values.append(item[key_name])
-#     return data_values
-
 def extract_values(data_input, key_name):
     all_values = []
     for entry in data_input.data:
@@ -108,11 +96,9 @@ def extract_values(data_input, key_name):
 
         values = []
         for item in nested_data:
-            # Directly check if the key exists in the item dictionary.
             if key_name in item:
                 values.append(item[key_name])
             else:
-                # If the key does not exist, append None or handle as needed.
                 values.append(None)
         all_values.append(values)
     return all_values
@@ -120,6 +106,9 @@ def extract_values(data_input, key_name):
 
 def analyze_data(api_key, app_name):
     run_ids = get_run_ids(api_key, app_name)
+    threshold_str = os.getenv("THRESHOLD")
+    threshold = float(threshold_str) if threshold_str else 0.0
+    print("THRESHOLD: ", threshold)
     if len(run_ids) < 1:
         return "No previous runs found for the specified app."
     else:
@@ -137,15 +126,28 @@ def analyze_data(api_key, app_name):
         old = values[1]
         bootstrap_mean_new, bootstrap_ci_new = bootstrap_analysis(new)
         bootstrap_mean_old, bootstrap_ci_old = bootstrap_analysis(old)
+
+        mean_change = (bootstrap_mean_new - bootstrap_mean_old) / bootstrap_mean_old if bootstrap_mean_old else float(
+            'inf')
+        ci_low_change = (bootstrap_ci_new[0] - bootstrap_ci_old[0]) / bootstrap_ci_old[0] if bootstrap_ci_old[
+            0] else float('inf')
+        ci_high_change = (bootstrap_ci_new[1] - bootstrap_ci_old[1]) / bootstrap_ci_old[1] if bootstrap_ci_old[
+            1] else float('inf')
+
         accepted = True
+
         if metric_kind[0] == "Latency" and (
-                bootstrap_mean_old < bootstrap_mean_new or bootstrap_ci_old[1] < bootstrap_ci_new[1]):
+              mean_change > threshold or ci_low_change > threshold or ci_high_change > threshold):
             accepted = False
-            print("Bootstrap: Latency increased, new version not accepted")
+            print(
+                f"Bootstrap: Latency increased by {mean_change * 100}%, which is more than the allowed threshold of "
+                f"{threshold * 100}%, new version not accepted.")
         if metric_kind[0] == "Throughput" and (
-                bootstrap_mean_old > bootstrap_mean_new or bootstrap_ci_old[1] > bootstrap_ci_new[1]):
+                mean_change < -threshold or ci_low_change < -threshold or ci_high_change < -threshold):
             accepted = False
-            print("Bootstrap: Throughput decreased, new version not accepted")
+            print(
+                f"Bootstrap: Throughput decreased by {mean_change * 100}%, which is more than the allowed threshold of "
+                f"{threshold * 100}%, new version not accepted.")
 
         wilcoxon_stat, wilcoxon_p = wilcoxon_test(new, old)
 
@@ -154,22 +156,35 @@ def analyze_data(api_key, app_name):
             median_new = np.median(new)
             median_old = np.median(old)
 
-            if metric_kind[0] == "Latency" and median_new > median_old:
+            median_change = (median_new - median_old) / median_old if median_old else float('inf')
+
+            if metric_kind[0] == "Latency" and median_change > threshold:
                 accepted = False
-                print("Wilcoxon: New version has significantly higher latency.")
-            elif metric_kind[0] == "Throughput" and median_new < median_old:
+                print("Wilcoxon: New version has significantly higher latency, which is not accepted.")
+            if metric_kind[0] == "Throughput" and median_change < -threshold:
                 accepted = False
-                print("Wilcoxon: New version has significantly lower throughput.")
-            else:
-                print("Wilcoxon: No adverse effect on performance detected.")
-        else:
-            print(f"Wilcoxon: No significant difference detected (p={wilcoxon_p:.4f}).")
+                print("Wilcoxon: New version has significantly lower throughput, which is not accepted.")
 
         insert_analysis_results(compare_ids[0], bootstrap_mean_new, bootstrap_ci_new, wilcoxon_stat, wilcoxon_p,
                                 accepted)
 
 
-api_key = 'key_9dWvLH5RNrUi7kkruwBpZz'
-app_name = "App1"
+data = supabase.table("experiment_run").select("general_data").execute()
 
-analyze_data(api_key, app_name)
+if data.data and len(data.data) > 0:
+    general_data = data.data[0]['general_data']
+    if len(general_data) > 0 and len(general_data[0]) > 1:
+        app_name = general_data[0][1]
+        print(f"App name: {app_name}")
+    else:
+        print("Unexpected structure or content in 'general_data'")
+else:
+    print("No data found or error in query.")
+
+api_key = os.getenv("UNKEY_API_ID")
+
+# Only call analyze_data if app_name is defined
+if app_name:
+    analyze_data(api_key, app_name)
+else:
+    print("App name is undefined, skipping analyze_data call.")
