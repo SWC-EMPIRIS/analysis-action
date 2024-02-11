@@ -106,16 +106,27 @@ def extract_values(data_input, key_name):
 
 def analyze_data(api_key, app_name):
     run_ids = get_run_ids(api_key, app_name)
+    print("RUN IDS: ", run_ids)
     threshold_str = os.getenv("THRESHOLD")
     threshold = float(threshold_str) if threshold_str else 0.0
     print("THRESHOLD: ", threshold)
     if len(run_ids) < 1:
         return "No previous runs found for the specified app."
     else:
+        # @TODO get all metric types per run_id and ensure that only the same metric types are compared
         compare_ids = heapq.nlargest(2, run_ids)
-        data = supabase.table("timeseries").select("timeseries_data").in_("id", compare_ids).execute()
-        response = supabase.table("timeseries").select("metric").in_("id", compare_ids).execute()
+        print("COMPARE IDS: ", compare_ids)
+        data_old = supabase.table("timeseries").select("timeseries_data").in_("id", str(compare_ids[1])).execute()
+        data_new = supabase.table("timeseries").select("timeseries_data").in_("id", str(compare_ids[0])).execute()
+        print("DATA NEW: ", data_new.data)
+        print("DATA OLD: ", data_old.data)
+        # response_old = supabase.table("timeseries").select("metric").in_("id", str(compare_ids[1])).execute()
+        response_old = supabase.table("timeseries").select("metric").eq("experiment_run_id", str(compare_ids[1])).execute()
+        response_new = supabase.table("timeseries").select("metric").eq("experiment_run_id", str(compare_ids[0])).execute()
+        print("RESPONSE NEW: ", response_new.data)
+        print("RESPONSE OLD: ", response_old.data)
         metric_kind = [item['metric'] for item in response.data]
+        print("metric kind", metric_kind)
 
         if metric_kind[0] != metric_kind[1]:
             print("Different metric types. Cannot compare.")
@@ -169,17 +180,21 @@ def analyze_data(api_key, app_name):
                                 accepted)
 
 
-data = supabase.table("experiment_run").select("general_data").execute()
+response = supabase.table("experiment_run").select("general_data").order("id", desc=True).limit(1).execute()
 
-if data.data and len(data.data) > 0:
-    general_data = data.data[0]['general_data']
-    if len(general_data) > 0 and len(general_data[0]) > 1:
-        app_name = general_data[0][1]
+data = response.data
+
+if data and 'general_data' in data[0]:
+    general_data = data[0]['general_data']
+    # Look for the entry with 'Application Name' and get its value
+    app_name = next((item[1] for item in general_data if item[0] == 'Application name'), None)
+
+    if app_name:
         print(f"App name: {app_name}")
     else:
-        print("Unexpected structure or content in 'general_data'")
+        print("Application Name not found in general_data.")
 else:
-    print("No data found or error in query.")
+    print("No data found or unexpected data structure.")
 
 api_key = os.getenv("UNKEY_API_ID")
 
