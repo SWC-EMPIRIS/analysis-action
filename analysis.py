@@ -113,71 +113,76 @@ def analyze_data(api_key, app_name):
     if len(run_ids) < 1:
         return "No previous runs found for the specified app."
     else:
-        # @TODO get all metric types per run_id and ensure that only the same metric types are compared
         compare_ids = heapq.nlargest(2, run_ids)
         print("COMPARE IDS: ", compare_ids)
-        data_old = supabase.table("timeseries").select("timeseries_data").in_("id", str(compare_ids[1])).execute()
-        data_new = supabase.table("timeseries").select("timeseries_data").in_("id", str(compare_ids[0])).execute()
-        print("DATA NEW: ", data_new.data)
-        print("DATA OLD: ", data_old.data)
-        # response_old = supabase.table("timeseries").select("metric").in_("id", str(compare_ids[1])).execute()
-        response_old = supabase.table("timeseries").select("metric").eq("experiment_run_id", str(compare_ids[1])).execute()
-        response_new = supabase.table("timeseries").select("metric").eq("experiment_run_id", str(compare_ids[0])).execute()
-        print("RESPONSE NEW: ", response_new.data)
-        print("RESPONSE OLD: ", response_old.data)
-        metric_kind = [item['metric'] for item in response.data]
-        print("metric kind", metric_kind)
+        data_new = supabase.table("timeseries").select("timeseries_data, metric").eq("experiment_run_id", str(compare_ids[0])).execute()
+        data_old = supabase.table("timeseries").select("timeseries_data, metric").eq("experiment_run_id", str(compare_ids[1])).execute()
 
-        if metric_kind[0] != metric_kind[1]:
-            print("Different metric types. Cannot compare.")
+        metrics_new = [item['metric'] for item in data_new.data]
+        metrics_old = [item['metric'] for item in data_old.data]
+
+        metrics = list(set(metrics_new).intersection(set(metrics_old)))
+
+        # If there are no common metrics, we cannot compare
+        if len(metrics) == 0:
+            print("No common metrics found. Cannot compare.")
             return
 
-        values = extract_values(data, metric_kind[0])
-        new = values[0]
-        old = values[1]
-        bootstrap_mean_new, bootstrap_ci_new = bootstrap_analysis(new)
-        bootstrap_mean_old, bootstrap_ci_old = bootstrap_analysis(old)
+        print("METRICS: ", metrics)
 
-        mean_change = (bootstrap_mean_new - bootstrap_mean_old) / bootstrap_mean_old if bootstrap_mean_old else float(
-            'inf')
-        ci_low_change = (bootstrap_ci_new[0] - bootstrap_ci_old[0]) / bootstrap_ci_old[0] if bootstrap_ci_old[
-            0] else float('inf')
-        ci_high_change = (bootstrap_ci_new[1] - bootstrap_ci_old[1]) / bootstrap_ci_old[1] if bootstrap_ci_old[
-            1] else float('inf')
+        for metric in metrics:
+            new = list(map(lambda o: o[metric], [item['timeseries_data'] for item in data_new.data if item['metric'] == metric][0]["data"]))
+            old = list(map(lambda o: o[metric], [item['timeseries_data'] for item in data_old.data if item['metric'] == metric][0]["data"]))
 
-        accepted = True
+            bootstrap_mean_new, bootstrap_ci_new = bootstrap_analysis(new)
+            bootstrap_mean_old, bootstrap_ci_old = bootstrap_analysis(old)
 
-        if metric_kind[0] == "Latency" and (
-              mean_change > threshold or ci_low_change > threshold or ci_high_change > threshold):
-            accepted = False
-            print(
-                f"Bootstrap: Latency increased by {mean_change * 100}%, which is more than the allowed threshold of "
-                f"{threshold * 100}%, new version not accepted.")
-        if metric_kind[0] == "Throughput" and (
-                mean_change < -threshold or ci_low_change < -threshold or ci_high_change < -threshold):
-            accepted = False
-            print(
-                f"Bootstrap: Throughput decreased by {mean_change * 100}%, which is more than the allowed threshold of "
-                f"{threshold * 100}%, new version not accepted.")
+            mean_change = (bootstrap_mean_new - bootstrap_mean_old) / bootstrap_mean_old if bootstrap_mean_old else float(
+                'inf')
+            ci_low_change = (bootstrap_ci_new[0] - bootstrap_ci_old[0]) / bootstrap_ci_old[0] if bootstrap_ci_old[
+                0] else float('inf')
+            ci_high_change = (bootstrap_ci_new[1] - bootstrap_ci_old[1]) / bootstrap_ci_old[1] if bootstrap_ci_old[
+                1] else float('inf')
 
-        wilcoxon_stat, wilcoxon_p = wilcoxon_test(new, old)
+            accepted = True
 
-        if wilcoxon_p < 0.05:
-            print(f"Wilcoxon: Significant difference detected (p={wilcoxon_p:.4f}).")
-            median_new = np.median(new)
-            median_old = np.median(old)
-
-            median_change = (median_new - median_old) / median_old if median_old else float('inf')
-
-            if metric_kind[0] == "Latency" and median_change > threshold:
+            if metric == "Latency" and (
+                  mean_change > threshold or ci_low_change > threshold or ci_high_change > threshold):
                 accepted = False
-                print("Wilcoxon: New version has significantly higher latency, which is not accepted.")
-            if metric_kind[0] == "Throughput" and median_change < -threshold:
+                print(
+                    f"Bootstrap: Latency increased by {mean_change * 100}%, which is more than the allowed threshold of "
+                    f"{threshold * 100}%, new version not accepted.")
+            if metric == "Throughput" and (
+                    mean_change < -threshold or ci_low_change < -threshold or ci_high_change < -threshold):
                 accepted = False
-                print("Wilcoxon: New version has significantly lower throughput, which is not accepted.")
+                print(
+                    f"Bootstrap: Throughput decreased by {mean_change * 100}%, which is more than the allowed threshold of "
+                    f"{threshold * 100}%, new version not accepted.")
 
-        insert_analysis_results(compare_ids[0], bootstrap_mean_new, bootstrap_ci_new, wilcoxon_stat, wilcoxon_p,
-                                accepted)
+            # Make sure new and old have the same length
+            if len(new) > len(old):
+                new = new[:len(old)]
+            elif len(old) > len(new):
+                old = old[:len(new)]
+
+            wilcoxon_stat, wilcoxon_p = wilcoxon_test(new, old)
+
+            if wilcoxon_p < 0.05:
+                print(f"Wilcoxon: Significant difference detected (p={wilcoxon_p:.4f}).")
+                median_new = np.median(new)
+                median_old = np.median(old)
+
+                median_change = (median_new - median_old) / median_old if median_old else float('inf')
+
+                if metric == "Latency" and median_change > threshold:
+                    accepted = False
+                    print("Wilcoxon: New version has significantly higher latency, which is not accepted.")
+                if metric == "Throughput" and median_change < -threshold:
+                    accepted = False
+                    print("Wilcoxon: New version has significantly lower throughput, which is not accepted.")
+
+            insert_analysis_results(compare_ids[0], bootstrap_mean_new, bootstrap_ci_new, wilcoxon_stat, wilcoxon_p,
+                                    accepted)
 
 
 response = supabase.table("experiment_run").select("general_data").order("id", desc=True).limit(1).execute()
