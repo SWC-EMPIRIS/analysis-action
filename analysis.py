@@ -31,7 +31,7 @@ def wilcoxon_test(x, y):
     return stat, p
 
 
-def insert_analysis_results(run_id, bootstrap_mean, bootstrap_ci, wilcoxon_stat, wilcoxon_p, accepted):
+def insert_analysis_results(run_id, bootstrap_mean, bootstrap_ci, wilcoxon_stat, wilcoxon_p, accepted, metric):
     result = supabase.table('analysis_results').insert({
         'experiment_run_id': run_id,  # Add the run_id to the database record
         'bootstrap_mean': bootstrap_mean,
@@ -39,7 +39,8 @@ def insert_analysis_results(run_id, bootstrap_mean, bootstrap_ci, wilcoxon_stat,
         'bootstrap_ci_high': bootstrap_ci[1],
         'wilcoxon_stat': wilcoxon_stat,
         'wilcoxon_p': wilcoxon_p,
-        'accepted': accepted
+        'accepted': accepted,
+        'metric': metric
     }).execute()
 
 
@@ -182,7 +183,7 @@ def analyze_data(api_key, app_name):
                     print("Wilcoxon: New version has significantly lower throughput, which is not accepted.")
 
             insert_analysis_results(compare_ids[0], bootstrap_mean_new, bootstrap_ci_new, wilcoxon_stat, wilcoxon_p,
-                                    accepted)
+                                    accepted, metric)
 
 
 response = supabase.table("experiment_run").select("general_data").order("id", desc=True).limit(1).execute()
