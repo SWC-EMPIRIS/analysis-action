@@ -30,9 +30,20 @@ def wilcoxon_test(x, y):
     stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", method="auto")
     return stat, p
 
+def get_next_dataset_id():
+    # Fetch the last dataset_id from the analysis_results table
+    last_entry = supabase.table('analysis_results').select('dataset_id').order('dataset_id', desc=True).limit(1).execute()
+
+    if last_entry.data:
+        last_id = last_entry.data[0]['dataset_id']
+        return last_id + 1
+    else:
+        # If there are no entries in the table, start with 1
+        return 1
 
 def insert_analysis_results(run_id, bootstrap_mean, bootstrap_ci, wilcoxon_stat, wilcoxon_p, accepted, metric):
     result = supabase.table('analysis_results').insert({
+        'dataset_id': get_next_dataset_id(),
         'experiment_run_id': run_id,  # Add the run_id to the database record
         'bootstrap_mean': bootstrap_mean,
         'bootstrap_ci_low': bootstrap_ci[0],
@@ -107,7 +118,20 @@ def extract_values(data_input, key_name):
 
 def analyze_data(api_key, app_name):
     run_ids = get_run_ids(api_key, app_name)
-    print("RUN IDS: ", run_ids)
+    # Print fetched Run IDs for debugging
+    print("Fetched Run IDs: ", run_ids)
+
+    # Check if run_ids is a string, indicating an error message
+    if isinstance(run_ids, str):
+        return run_ids  # Return the error message
+
+    # Check if there are fewer than 2 run IDs
+    if len(run_ids) < 2:
+        return ("Not enough data available for comparison. Please ensure there are at least two experiment runs "
+                "before attempting analysis.")
+
+
+    # print("RUN IDS: ", run_ids)
     threshold_str = os.getenv("THRESHOLD")
     threshold = float(threshold_str) if threshold_str else 0.0
     print("THRESHOLD: ", threshold)
@@ -209,3 +233,4 @@ if app_name:
     analyze_data(api_key, app_name)
 else:
     print("App name is undefined, skipping analyze_data call.")
+
