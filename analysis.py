@@ -32,10 +32,10 @@ def wilcoxon_test(x, y):
 
 def get_next_dataset_id():
     # Fetch the last dataset_id from the analysis_results table
-    last_entry = supabase.table('analysis_results').select('dataset_id').order('dataset_id', desc=True).limit(1).execute()
+    last_entry = supabase.table('analysis_results').select('id').order('id', desc=True).limit(1).execute()
 
     if last_entry.data:
-        last_id = last_entry.data[0]['dataset_id']
+        last_id = last_entry.data[0]['id']
         return last_id + 1
     else:
         # If there are no entries in the table, start with 1
@@ -43,7 +43,7 @@ def get_next_dataset_id():
 
 def insert_analysis_results(run_id, bootstrap_mean, bootstrap_ci, wilcoxon_stat, wilcoxon_p, accepted, metric):
     result = supabase.table('analysis_results').insert({
-        'dataset_id': get_next_dataset_id(),
+        'id': get_next_dataset_id(),
         'experiment_run_id': run_id,  # Add the run_id to the database record
         'bootstrap_mean': bootstrap_mean,
         'bootstrap_ci_low': bootstrap_ci[0],
